@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	ErrNotAnSlice      = errors.New("provided interface must be an slice")
-	ErrUnsupportedType = errors.New("unsupported type, remember struct nesting is not supported")
+	ErrNotAnStructSlice = errors.New("provided interface must be an slice of structs")
+	ErrUnsupportedType  = errors.New("unsupported type, remember struct nesting is not supported")
 )
 
 type Encoder struct {
@@ -21,8 +21,11 @@ func NewEncoder(w io.Writer) *Encoder {
 	return &Encoder{csv.NewWriter(w)}
 }
 
-func headers(t reflect.Type) []string {
+func headers(t reflect.Type) ([]string, error) {
 	t = safeType(t)
+	if t.Kind() != reflect.Struct {
+		return nil, ErrNotAnStructSlice
+	}
 
 	h := make([]string, t.NumField())
 
@@ -34,13 +37,13 @@ func headers(t reflect.Type) []string {
 		h[i] = name
 	}
 
-	return h
+	return h, nil
 }
 
 func values(obj interface{}) ([]string, error) {
 	v := safeValue(reflect.ValueOf(obj))
 	data := make([]string, v.NumField())
-	for i := 0; i < v.NumField(); i ++ {
+	for i := 0; i < v.NumField(); i++ {
 		switch f := v.Field(i); f.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			data[i] = fmt.Sprintf("%d", reflect.ValueOf(f.Interface()).Int())
@@ -91,19 +94,27 @@ func (e *Encoder) Encode(obj interface{}) error {
 	v := reflect.ValueOf(obj)
 
 	if t.Kind() != reflect.Slice {
-		return ErrNotAnSlice
+		return ErrNotAnStructSlice
 	}
 
 	if v.IsNil() || v.IsZero() || v.Len() == 0 {
 		return nil
 	}
 
-	if err := e.out.Write(headers(t.Elem())); err != nil {
+	hh, err := headers(t.Elem())
+	if err != nil {
 		return err
 	}
 
+	err = e.out.Write(hh)
+	if err != nil {
+		return err
+	}
+
+	e.out.Flush()
+
 	oo := castToSlice(obj)
-	for i := 0; i < len(oo); i ++ {
+	for i := 0; i < len(oo); i++ {
 		vv, err := values(oo[i])
 		if err != nil {
 			return err
@@ -112,6 +123,7 @@ func (e *Encoder) Encode(obj interface{}) error {
 		if err != nil {
 			return err
 		}
+		e.out.Flush()
 	}
 
 	e.out.Flush()
